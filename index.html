@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="theme-color" content="#0a1628">
+  <title>中途岛：小宝特工空战 · 关卡1原型</title>
+  <link rel="stylesheet" href="css/v3.css">
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.160.0/build/three.module.js"
+    }
+  }
+  </script>
+</head>
+<body>
+  <div id="app">
+    <canvas id="game"></canvas>
+
+    <div id="rotateGate" class="rotate-gate">
+      <div class="rotate-card">
+        <div class="rotate-icon" aria-hidden="true">⟳</div>
+        <p>请横屏游玩</p>
+        <span>《中途岛：小宝特工空战》</span>
+      </div>
+    </div>
+
+    <div id="hud" class="hud hidden">
+      <div class="hud-top">
+        <div class="hud-block">
+          <span class="label">装甲</span>
+          <div class="bar"><i id="hpFill"></i></div>
+        </div>
+        <div class="hud-mission">
+          <div id="missionText">击落敌机 0/6</div>
+          <div id="phaseText">阶段 A · 侦察护航</div>
+        </div>
+        <button id="btnPause" class="btn-icon" type="button" aria-label="暂停">Ⅱ</button>
+      </div>
+
+      <div id="reticle" class="reticle hidden" aria-hidden="true"></div>
+      <div id="lockHint" class="lock-hint hidden">锁定</div>
+      <div id="subtitle" class="subtitle hidden"></div>
+
+      <div class="hud-bottom">
+        <div id="joystick" class="joystick" aria-label="虚拟摇杆">
+          <div id="stick" class="stick"></div>
+        </div>
+        <div class="action-pad">
+          <button id="btnShield" class="btn-action shield" type="button">护盾</button>
+          <button id="btnMissile" class="btn-action missile" type="button">地狱火</button>
+          <button id="btnBoost" class="btn-action boost" type="button">加速</button>
+          <button id="btnFire" class="btn-action fire" type="button">射击</button>
+        </div>
+      </div>
+
+      <div class="cd-row">
+        <span id="cdMissile">导弹就绪</span>
+        <span id="cdShield">护盾就绪</span>
+      </div>
+    </div>
+
+    <div id="overlay" class="overlay">
+      <div class="panel">
+        <p class="eyebrow">DEMO · 关卡 1</p>
+        <h1>中途岛：小宝特工空战</h1>
+        <p class="lead">云上的眼睛 · 轻量 3D 飞行射击原型</p>
+        <button id="btnStart" class="btn-primary" type="button">开始任务</button>
+        <p class="hint">左手摇杆转向 · 右手按住射击 / 加速 · 横屏体验更佳<br>键鼠：WASD/方向键 · 空格射击 · Shift加速 · E导弹 · Q护盾</p>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="js/v3/main.js"></script>
+</body>
+</html>

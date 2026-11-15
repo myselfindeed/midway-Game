@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#10161C">
+<title>中途岛 · 1942</title>
+<link rel="stylesheet" href="css/style.css">
+<!-- 部署说明：全部路径均为相对路径，可直接放在服务器的任意子目录下。
+     不需要 Node、不需要构建步骤、不需要服务端路由。 -->
+</head>
+<body>
+<div id="app">
+  <canvas id="stage"></canvas>
+
+  <div id="hud" class="hud hidden">
+    <div class="hud-tl">
+      <div id="lives" class="lives"></div>
+      <div id="armor" class="armor"></div>
+    </div>
+    <div class="hud-tc">
+      <div class="prog"><i id="progFill"></i></div>
+    </div>
+    <button id="btnPause" class="btn-pause" aria-label="暂停"><span></span><span></span></button>
+    <button id="btnSkill" class="btn-skill hidden" aria-label="紧急闪避">冲刺</button>
+    <button id="btnBomb" class="btn-bomb hidden" aria-label="俯冲投弹">投弹</button>
+    <div id="subtitle" class="subtitle"></div>
+    <div class="xpbar"><i id="xpFill"></i></div>
+    <div id="lvTag" class="lv-tag">Lv.1</div>
+  </div>
+
+  <div id="overlay" class="overlay"></div>
+  <div id="rotate" class="rotate hidden">
+    <div class="rotate-icon"></div>
+    <p>请竖屏使用</p>
+  </div>
+</div>
+
+<script src="js/core.js"></script>
+<script src="js/art.js"></script>
+<script src="js/entities.js"></script>
+<script src="js/levels.js"></script>
+<script src="js/ui.js"></script>
+<script src="js/game.js"></script>
+<script src="js/main.js"></script>
+</body>
+</html>
