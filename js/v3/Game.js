@@ -1,17 +1,19 @@
 import * as THREE from 'three';
-import { createFighter, createDestroyer, createCarrier, createOcean, createSky, createClouds } from './models.js';
+import { createFighter, createDestroyer, createCarrier, createOcean, createSky, createClouds, createIsland } from './models.js';
 
 const CRUISE = 28;
 const BOOST = 48;
 const TURN = 1.55;
 const FIRE_RATE = 0.09;
 const BULLET_SPEED = 90;
-const LOCK_FOV = 0.42;
-const LOCK_RANGE = 90;
+const GUN_RANGE = 130;
 const MISSILE_CD = 22;
 const SHIELD_CD = 25;
 const SHIELD_DURATION = 2;
 const SHIELD_DR = 0.5;
+const OPEN_RANGE = CRUISE * 12;
+const CONE = THREE.MathUtils.degToRad(120);
+const APPROACH = 14;
 
 export class Game {
   constructor(canvas, input, ui) {
@@ -23,16 +25,14 @@ export class Game {
 
     this.clock = new THREE.Clock();
     this.scene = new THREE.Scene();
-    this.scene.fog = new THREE.Fog(0xc5e4f6, 90, 380);
-
-    this.camera = new THREE.PerspectiveCamera(60, 1, 0.1, 800);
+    this.camera = new THREE.PerspectiveCamera(60, 1, 0.1, 30000);
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-    this.renderer.setClearColor(0x9ecff0);
+    this.renderer.setClearColor(0x4ea0ea);
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.08;
+    this.renderer.toneMappingExposure = 1.18;
 
-    const hemi = new THREE.HemisphereLight(0xd7ecff, 0x1a3040, 1.25);
+    const hemi = new THREE.HemisphereLight(0xcfe9ff, 0x1d4e86, 1.35);
     this.scene.add(hemi);
     const sun = new THREE.DirectionalLight(0xfff2d6, 1.35);
     sun.position.set(30, 90, 40);
@@ -42,10 +42,14 @@ export class Game {
     fill.position.set(-40, 30, -20);
     this.scene.add(fill);
 
-    this.scene.add(createSky());
-    this.scene.add(createClouds());
+    this.sky = createSky();
+    this.scene.add(this.sky);
+    this.clouds = createClouds();
+    this.scene.add(this.clouds);
     this.ocean = createOcean();
     this.scene.add(this.ocean);
+    this.landChunks = new Map();
+    this.landChunkKey = '';
 
     this.player = {
       mesh: createFighter(0x4aa3ff, false),
@@ -63,10 +67,42 @@ export class Game {
     this.player.mesh.position.set(0, 14, 40);
     this.scene.add(this.player.mesh);
 
-    this.shieldAura = new THREE.Mesh(
-      new THREE.SphereGeometry(1.6, 16, 12),
-      new THREE.MeshBasicMaterial({ color: 0x3dffa8, transparent: true, opacity: 0.22, wireframe: true })
+    this.shieldMat = new THREE.ShaderMaterial({
+      transparent: true,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+      side: THREE.DoubleSide,
+      uniforms: { uTime: { value: 0 } },
+      vertexShader: `
+        varying vec3 vPos;
+        void main() {
+          vPos = position;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+      `,
+      fragmentShader: `
+        uniform float uTime;
+        varying vec3 vPos;
+        void main() {
+          float lat = abs(fract(vPos.y * 1.7 + uTime * 0.35) - 0.5);
+          float lon = abs(fract(vPos.x * 1.5 - uTime * 0.22) - 0.5);
+          float net = smoothstep(0.07, 0.0, min(lat, lon));
+          float flow = smoothstep(0.55, 1.0, sin(vPos.y * 9.0 - uTime * 7.5) * sin(vPos.x * 7.0 + uTime * 5.0));
+          float arc = smoothstep(0.82, 1.0, sin(vPos.z * 16.0 + uTime * 18.0));
+          float a = net * (0.28 + flow * 0.85) + arc * 0.75;
+          vec3 col = mix(vec3(0.25, 0.85, 1.0), vec3(0.9, 1.0, 1.0), max(flow, arc));
+          gl_FragColor = vec4(col, a);
+        }
+      `,
+    });
+    this.shieldAura = new THREE.Group();
+    const shell = new THREE.Mesh(new THREE.SphereGeometry(2.45, 28, 18), this.shieldMat);
+    const net = new THREE.Mesh(
+      new THREE.SphereGeometry(2.48, 14, 10),
+      new THREE.MeshBasicMaterial({ color: 0x8af4ff, wireframe: true, transparent: true, opacity: 0.4 })
     );
+    this.shieldAura.add(shell);
+    this.shieldAura.add(net);
     this.shieldAura.visible = false;
     this.player.mesh.add(this.shieldAura);
 
@@ -83,6 +119,7 @@ export class Game {
     this.killTarget = 6;
     this.checkpoint = 'start';
     this.ended = false;
+    this.elapsed = 0;
     this._raf = 0;
 
     this._onResize = () => this.resize();
@@ -100,6 +137,7 @@ export class Game {
 
   resetToCheckpoint() {
     this.ended = false;
+    if (this.checkpoint === 'start') this.elapsed = 0;
     this.clearCombatants(false);
     this.player.hp = this.player.maxHp;
     this.player.yaw = 0;
@@ -138,11 +176,11 @@ export class Game {
       mesh: createCarrier(),
       hp: 400,
       maxHp: 400,
-      radius: 22,
+      radius: 40,
       fireCd: 2.5,
       aaDamage: 6,
     };
-    carrier.mesh.position.set(0, -17.2, -95);
+    carrier.mesh.position.set(0, -18, -110);
     this.ships.push(carrier);
     this.scene.add(carrier.mesh);
 
@@ -160,7 +198,7 @@ export class Game {
         fireCd: 1.2 + Math.random(),
         aaDamage: 9,
       };
-      d.mesh.position.set(p.x, -17.2, p.z);
+      d.mesh.position.set(p.x, -18, p.z);
       this.ships.push(d);
       this.scene.add(d.mesh);
     }
@@ -184,12 +222,69 @@ export class Game {
     return [...this.enemies, ...this.aliveShips()];
   }
 
-  /** Keep ship cards facing camera so destroyer/carrier.png 质感可读 */
+  chunkHash(ix, iz, salt) {
+    let n = Math.imul(ix | 0, 374761393) ^ Math.imul(iz | 0, 668265263) ^ salt;
+    n = Math.imul(n ^ (n >>> 13), 1274126177);
+    return ((n ^ (n >>> 16)) >>> 0) / 4294967296;
+  }
+
+  /** Keep a ring of island patches around the player. Old patches drop off behind. */
+  updateLand() {
+    const CHUNK = 280;
+    const RING = 2;
+    const p = this.player.mesh.position;
+    const cx = Math.floor(p.x / CHUNK);
+    const cz = Math.floor(p.z / CHUNK);
+    const key = `${cx},${cz}`;
+    if (key === this.landChunkKey) return;
+    this.landChunkKey = key;
+    const need = new Set();
+    for (let dz = -RING; dz <= RING; dz++) {
+      for (let dx = -RING; dx <= RING; dx++) need.add(`${cx + dx},${cz + dz}`);
+    }
+    const drop = [];
+    for (const [k, group] of this.landChunks) {
+      if (!need.has(k)) drop.push([k, group]);
+    }
+    for (const [k, group] of drop) {
+      this.scene.remove(group);
+      group.traverse((obj) => {
+        if (obj.geometry) obj.geometry.dispose();
+        if (obj.material) {
+          if (obj.material.map) obj.material.map.dispose();
+          if (obj.material.normalMap) obj.material.normalMap.dispose();
+          obj.material.dispose();
+        }
+      });
+      this.landChunks.delete(k);
+    }
+    for (const k of need) {
+      if (this.landChunks.has(k)) continue;
+      const [ix, iz] = k.split(',').map(Number);
+      if (this.chunkHash(ix, iz, 3) > 0.55) {
+        this.landChunks.set(k, new THREE.Group());
+        continue;
+      }
+      const x = (ix + 0.5) * CHUNK + (this.chunkHash(ix, iz, 1) - 0.5) * CHUNK * 0.5;
+      const z = (iz + 0.5) * CHUNK + (this.chunkHash(ix, iz, 2) - 0.5) * CHUNK * 0.5;
+      const nearFleet = Math.hypot(x, z + 110) < 130;
+      if (nearFleet) {
+        this.landChunks.set(k, new THREE.Group());
+        continue;
+      }
+      const radius = 26 + this.chunkHash(ix, iz, 4) * 22;
+      const island = createIsland(x, z, radius);
+      this.scene.add(island);
+      this.landChunks.set(k, island);
+    }
+  }
+
   updateShipBillboards() {
-    const cam = this.camera.position;
-    for (const s of this.aliveShips()) {
-      const p = s.mesh.position;
-      s.mesh.rotation.y = Math.atan2(cam.x - p.x, cam.z - p.z);
+    if (!this.clouds) return;
+    this.clouds.position.x = this.player.mesh.position.x;
+    this.clouds.position.z = this.player.mesh.position.z;
+    for (const cloud of this.clouds.children) {
+      cloud.lookAt(this.camera.position);
     }
   }
 
@@ -226,23 +321,35 @@ export class Game {
     }
   }
 
+  playerForward() {
+    const yaw = this.player.yaw;
+    return new THREE.Vector3(-Math.sin(yaw), 0, -Math.cos(yaw));
+  }
+
   spawnWave(phase) {
-    const count = phase === 'A' ? 6 : 6;
-    // Between player start (z≈40) and fleet (z≈-130)
-    const baseZ = phase === 'A' ? -35 : -55;
+    const count = 1;
+    const origin = this.player.mesh.position;
+    const fwd = this.playerForward();
+    const half = CONE * 0.5;
     for (let i = 0; i < count; i++) {
+      const slot = count === 1 ? 0 : -half + (i / (count - 1)) * CONE;
+      const dir = fwd.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), slot);
       const mesh = createFighter(0xc44a4a, true);
-      const x = (i - (count - 1) / 2) * 14 + (Math.random() - 0.5) * 4;
-      const y = 10 + Math.random() * 8;
-      const z = baseZ - Math.random() * 35 - (phase === 'B' ? 25 : 0);
-      mesh.position.set(x, y, z);
+      mesh.position.set(
+        origin.x + dir.x * OPEN_RANGE,
+        origin.y + (i - (count - 1) / 2) * 1.8,
+        origin.z + dir.z * OPEN_RANGE
+      );
+      mesh.lookAt(origin.x, origin.y, origin.z);
+      mesh.rotateY(Math.PI);
       const enemy = {
         mesh,
         hp: phase === 'A' ? 28 : 36,
         maxHp: phase === 'A' ? 28 : 36,
-        yaw: Math.PI,
+        slot,
+        hold: OPEN_RANGE,
         t: Math.random() * Math.PI * 2,
-        fireCd: 1 + Math.random(),
+        fireCd: 6 + Math.random() * 2,
       };
       this.enemies.push(enemy);
       this.scene.add(mesh);
@@ -252,25 +359,33 @@ export class Game {
   loop = () => {
     this._raf = requestAnimationFrame(this.loop);
     if (!this.running || this.paused) {
+      this.ui.setEngine(false);
       this.renderer.render(this.scene, this.camera);
       return;
     }
     const dt = Math.min(this.clock.getDelta(), 0.05);
+    this.elapsed += dt;
+    if (this.ocean?.material?.uniforms?.uTime) {
+      this.ocean.material.uniforms.uTime.value = this.elapsed;
+      this.ocean.material.uniforms.uCam.value.copy(this.camera.position);
+    }
     this.update(dt);
     this.renderer.render(this.scene, this.camera);
   };
 
   update(dt) {
     this.updatePlayer(dt);
+    this.updateLand();
     this.updateShipBillboards();
-    this.updateLock();
     this.updateEnemies(dt);
     this.updateProjectiles(dt);
     this.updateExplosions(dt);
     this.updateCamera(dt);
+    this.updateAim();
     this.ui.updateCds(this.player.missileCd, this.player.shieldCd, MISSILE_CD, SHIELD_CD);
     this.ui.updateHp(this.player.hp, this.player.maxHp);
-    this.ui.setLock(!!this.locked);
+    this.ui.updateFlight(this.player.speed, this.player.mesh.position.y, this.elapsed);
+    this.ui.setEngine(true, this.player.speed);
 
     if (!this.ended && this.player.hp <= 0) {
       this.ended = true;
@@ -294,7 +409,16 @@ export class Game {
       -Math.cos(p.yaw) * Math.cos(p.pitch)
     );
     p.mesh.position.addScaledVector(forward, p.speed * dt);
-    p.mesh.position.y = THREE.MathUtils.clamp(p.mesh.position.y, 4, 40);
+    // Soft sea avoidance only. No ceiling, so climbing does not hit a wall.
+    if (p.mesh.position.y < -8) {
+      const depth = -8 - p.mesh.position.y;
+      p.mesh.position.y += depth * Math.min(1, dt * 2.4);
+    }
+    if (p.mesh.position.y < -15) p.mesh.position.y = -15;
+    if (this.ocean) {
+      this.ocean.position.x = p.mesh.position.x;
+      this.ocean.position.z = p.mesh.position.z;
+    }
     p.mesh.rotation.order = 'YXZ';
     p.mesh.rotation.y = p.yaw;
     p.mesh.rotation.x = p.pitch;
@@ -308,6 +432,7 @@ export class Game {
     if (p.shieldT > 0) {
       p.shieldT = Math.max(0, p.shieldT - dt);
       this.shieldAura.visible = true;
+      this.shieldMat.uniforms.uTime.value = this.elapsed;
     } else {
       this.shieldAura.visible = false;
     }
@@ -340,31 +465,56 @@ export class Game {
     }
   }
 
-  updateLock() {
+  updateAim() {
     const origin = this.player.mesh.position;
-    const forward = new THREE.Vector3(
-      -Math.sin(this.player.yaw) * Math.cos(this.player.pitch),
-      Math.sin(this.player.pitch),
-      -Math.cos(this.player.yaw) * Math.cos(this.player.pitch)
-    );
     let best = null;
-    let bestScore = LOCK_FOV;
-    for (const e of this.lockTargets()) {
-      const to = e.mesh.position.clone().sub(origin);
-      const dist = to.length();
-      const minDist = e.radius ? e.radius * 0.35 : 2;
-      const maxDist = e.kind === 'carrier' || e.kind === 'destroyer' ? LOCK_RANGE + 40 : LOCK_RANGE;
-      if (dist > maxDist || dist < minDist) continue;
-      to.normalize();
-      const ang = 1 - forward.dot(to);
-      // Prefer aircraft slightly when angles are close
-      const bias = e.kind === 'carrier' || e.kind === 'destroyer' ? 0.04 : 0;
-      if (ang + bias < bestScore) {
-        bestScore = ang + bias;
+    let bestDist = GUN_RANGE;
+    for (const e of this.enemies) {
+      const dist = e.mesh.position.distanceTo(origin);
+      if (dist < bestDist) {
+        bestDist = dist;
         best = e;
       }
     }
-    this.locked = best;
+    const self = this.projectScreen(origin);
+    const lead = { x: self.x, y: Math.max(72, self.y - 210) };
+    if (!best) {
+      this.locked = null;
+      this.ui.setAim({ state: 'idle', frameX: lead.x, frameY: lead.y });
+      return;
+    }
+    const projected = this.projectScreen(best.mesh.position);
+    const inside = projected.inFront
+      && Math.abs(projected.x - lead.x) < 48
+      && Math.abs(projected.y - lead.y) < 48;
+    if (inside) {
+      this.locked = best;
+      this.ui.setAim({ state: 'aimed', frameX: lead.x, frameY: lead.y });
+    } else {
+      this.locked = null;
+      this.ui.setAim({
+        state: 'track',
+        frameX: lead.x,
+        frameY: lead.y,
+        x: projected.x,
+        y: projected.y,
+        behind: !projected.inFront,
+      });
+    }
+  }
+
+  projectScreen(world) {
+    const camFwd = new THREE.Vector3();
+    this.camera.getWorldDirection(camFwd);
+    const to = world.clone().sub(this.camera.position);
+    const inFront = camFwd.dot(to) > 0;
+    const ndc = world.clone().project(this.camera);
+    const rect = this.canvas.getBoundingClientRect();
+    return {
+      inFront,
+      x: (ndc.x * 0.5 + 0.5) * rect.width + rect.left,
+      y: (-ndc.y * 0.5 + 0.5) * rect.height + rect.top,
+    };
   }
 
   spawnBullet(fromMesh, dir, fromPlayer, damage) {
@@ -373,7 +523,7 @@ export class Game {
       new THREE.MeshBasicMaterial({ color: fromPlayer ? 0xe8fbff : 0xff6666 })
     );
     mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.clone().normalize());
-    mesh.position.copy(fromMesh.position).addScaledVector(dir, 2.4);
+    mesh.position.copy(fromMesh.position).addScaledVector(dir, 3.15);
     this.scene.add(mesh);
     this.bullets.push({
       mesh,
@@ -406,17 +556,27 @@ export class Game {
       e.t += dt;
       const toPlayer = playerPos.clone().sub(e.mesh.position);
       const dist = toPlayer.length();
-      if (dist > 0.001) {
-        toPlayer.normalize();
-        e.mesh.position.addScaledVector(toPlayer, 10 * dt);
-        e.mesh.position.x += Math.sin(e.t * 1.7) * 4 * dt;
-        e.mesh.position.y = THREE.MathUtils.clamp(e.mesh.position.y + Math.cos(e.t) * 2 * dt, 5, 36);
-        e.mesh.lookAt(playerPos);
+      e.hold = Math.max(52, (e.hold ?? OPEN_RANGE) - APPROACH * dt);
+      const dir = this.playerForward().applyAxisAngle(new THREE.Vector3(0, 1, 0), e.slot || 0);
+      const desired = playerPos.clone().addScaledVector(dir, e.hold);
+      desired.y = playerPos.y + Math.sin(e.t * 0.7) * 2.2;
+      const toSlot = desired.sub(e.mesh.position);
+      const gap = toSlot.length();
+      if (gap > 0.2) {
+        toSlot.multiplyScalar(1 / gap);
+        const speed = THREE.MathUtils.clamp(gap * 1.25, 18, 40);
+        e.mesh.position.addScaledVector(toSlot, speed * dt);
       }
+      if (e.mesh.position.y < -12) e.mesh.position.y = -12;
+      e.mesh.lookAt(playerPos);
+      e.mesh.rotateY(Math.PI);
       e.fireCd -= dt;
-      if (e.fireCd <= 0 && dist < 75) {
-        this.spawnBullet(e.mesh, toPlayer, false, 8);
-        e.fireCd = 1.4 + Math.random() * 0.8;
+      if (e.fireCd <= 0 && dist < 78) {
+        const shot = playerPos.clone().sub(e.mesh.position);
+        if (shot.lengthSq() > 0.01) {
+          this.spawnBullet(e.mesh, shot.normalize(), false, 8);
+          e.fireCd = 1.5 + Math.random() * 0.8;
+        }
       }
     }
 
@@ -527,6 +687,7 @@ export class Game {
     let d = dmg;
     if (this.player.shieldT > 0) d *= 1 - SHIELD_DR;
     this.player.hp = Math.max(0, this.player.hp - d);
+    this.ui.playSfx('hit');
     this.player.invuln = 0.35;
   }
 
@@ -542,6 +703,8 @@ export class Game {
       this.ended = true;
       this.running = false;
       this.ui.onVictory();
+    } else if (!this.ended) {
+      this.spawnWave(this.phase);
     }
   }
 
@@ -576,11 +739,12 @@ export class Game {
       -Math.sin(p.pitch) * 0.35 + 0.35,
       Math.cos(p.yaw) * Math.cos(p.pitch)
     );
-    const desired = p.mesh.position.clone().addScaledVector(back, 7.2);
-    desired.y += 1.8;
+    const desired = p.mesh.position.clone().addScaledVector(back, 7.6);
+    desired.y += 3.1;
     this.camera.position.lerp(desired, 0.12);
     const look = p.mesh.position.clone();
-    look.y += 0.35;
+    look.y -= 0.55;
     this.camera.lookAt(look);
+    if (this.sky) this.sky.position.copy(this.camera.position);
   }
 }

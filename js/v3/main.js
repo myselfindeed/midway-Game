@@ -1,7 +1,8 @@
+import * as THREE from 'three';
 import { Input } from './Input.js';
 import { Game } from './Game.js';
 import { UI } from './UI.js';
-import { preloadTextures, applyRendererAnisotropy } from './models.js';
+import { preloadTextures, preloadFighter, preloadCarrier, applyRendererAnisotropy } from './models.js';
 
 const canvas = document.getElementById('game');
 const btnStart = document.getElementById('btnStart');
@@ -23,7 +24,7 @@ if (btnStart) {
   btnStart.disabled = true;
   btnStart.textContent = '加载载具贴图…';
 }
-if (lead) lead.textContent = '正在接入 fighter / destroyer / carrier 参考质感…';
+if (lead) lead.textContent = '正在加载现代战机低模…';
 
 function wireGame(g) {
   ui.onStart = () => g.startLevel();
@@ -57,31 +58,42 @@ function wireGame(g) {
   window.addEventListener('resize', fit);
 }
 
-function boot(withTexture) {
+function boot(withTexture, withModel) {
   game = new Game(canvas, input, ui);
-  if (withTexture) applyRendererAnisotropy(game.renderer);
+  if (withTexture || withModel) applyRendererAnisotropy(game.renderer);
   wireGame(game);
   if (btnStart) {
     btnStart.disabled = false;
-    btnStart.textContent = withTexture ? '开始任务' : '开始任务（无贴图）';
+    btnStart.textContent = withModel ? '开始任务' : '开始任务（程序化战机）';
   }
   if (lead) {
-    lead.textContent = withTexture
-      ? '云上的眼睛 · 灰色现代战机与青色界面'
-      : '贴图加载失败，已使用程序化低模';
+    lead.textContent = withModel
+      ? '云上的眼睛 · 现代战机低模已接入'
+      : withTexture
+        ? '低模加载失败，使用程序化战机'
+        : '贴图与低模加载失败，已使用程序化低模';
   }
 }
 
-preloadTextures({
-  fighter: 'assets/fighter.png',
-  destroyer: 'assets/destroyer.png',
-  carrier: 'assets/carrier.png',
-})
-  .then(() => {
-    boot(true);
-    console.info('[小宝特工空战] fighter/destroyer/carrier 贴图就绪');
-  })
-  .catch((err) => {
-    console.warn('[小宝特工空战] 贴图加载失败，回退低模', err);
-    boot(false);
-  });
+const probe = new THREE.WebGLRenderer({ canvas, antialias: false, alpha: true });
+Promise.allSettled([
+  preloadTextures({
+    destroyer: 'assets/destroyer.png',
+    carrier: 'assets/carrier.png',
+  }),
+  preloadFighter('assets/models/fighter.glb', probe),
+  preloadCarrier('assets/models/carrier.glb'),
+]).then(([tex, model, carrier]) => {
+  probe.dispose();
+  if (model.status === 'rejected') {
+    console.warn('[小宝特工空战] 战机低模加载失败', model.reason);
+  } else {
+    console.info('[小宝特工空战] fighter.glb 就绪');
+  }
+  if (carrier.status === 'rejected') {
+    console.warn('[小宝特工空战] 航母低模加载失败', carrier.reason);
+  } else {
+    console.info('[小宝特工空战] carrier.glb 就绪');
+  }
+  boot(tex.status === 'fulfilled', model.status === 'fulfilled');
+});

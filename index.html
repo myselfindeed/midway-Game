@@ -11,7 +11,8 @@
   <script type="importmap">
   {
     "imports": {
-      "three": "https://unpkg.com/three@0.160.0/build/three.module.js"
+      "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
     }
   }
   </script>
@@ -35,14 +36,23 @@
           <div class="bar"><i id="hpFill"></i></div>
         </div>
         <div class="hud-mission">
+          <div class="hud-status">
+            <span class="status-chip">护盾</span>
+            <span id="flightTime">00:00</span>
+            <span class="status-chip">能量</span>
+          </div>
           <div id="missionText">击落敌机 0/6</div>
           <div id="phaseText">阶段 A · 侦察护航</div>
         </div>
-        <button id="btnPause" class="btn-icon" type="button" aria-label="暂停">Ⅱ</button>
+        <div class="hud-tools">
+          <button id="btnMute" class="btn-icon" type="button" aria-pressed="false" aria-label="关闭声音">声音</button>
+          <button id="btnPause" class="btn-icon" type="button" aria-label="暂停">Ⅱ</button>
+        </div>
       </div>
 
-      <div id="reticle" class="reticle hidden" aria-hidden="true"></div>
-      <div id="lockHint" class="lock-hint hidden">锁定</div>
+      <div id="aimFrame" class="aim-frame" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+      <div id="aimDir" class="aim-dir hidden" aria-hidden="true">敌机</div>
+      <div id="lockHint" class="lock-hint hidden">瞄准</div>
       <div id="subtitle" class="subtitle hidden"></div>
 
       <div class="hud-bottom">
@@ -51,15 +61,23 @@
         </div>
         <div class="action-pad">
           <button id="btnShield" class="btn-action shield" type="button">护盾</button>
-          <button id="btnMissile" class="btn-action missile" type="button">地狱火</button>
+          <button id="btnMissile" class="btn-action missile" type="button" aria-label="地狱火导弹">
+            <svg viewBox="0 0 48 48" aria-hidden="true"><path fill="currentColor" d="M24 3c1.6 5 2.4 9 2.4 14.2L36 23l-9.2 2.2.2 8.2L24 44l-3-10.6.2-8.2L12 23l9.6-5.8C21.6 12 22.4 8 24 3z"/></svg>
+          </button>
           <button id="btnBoost" class="btn-action boost" type="button">加速</button>
-          <button id="btnFire" class="btn-action fire" type="button">射击</button>
+          <button id="btnFire" class="btn-action fire" type="button" aria-label="机关枪">
+            <svg viewBox="0 0 48 48" aria-hidden="true"><path fill="currentColor" d="M4 25h7v-5l5-2v12l-5-2v-3H8l-4 7H2V25z"/><path fill="currentColor" d="M24 20h16v3H24zm2-6h12v3H26zm2 12h12v3H28z"/></svg>
+          </button>
         </div>
       </div>
 
       <div class="cd-row">
         <span id="cdMissile">导弹就绪</span>
         <span id="cdShield">护盾就绪</span>
+      </div>
+      <div class="flight-readout">
+        <div><b id="speedReadout">0</b><span>速度</span></div>
+        <div><b id="altReadout">0</b><span>高度</span></div>
       </div>
     </div>
 

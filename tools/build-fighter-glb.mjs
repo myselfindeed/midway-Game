@@ -216,8 +216,8 @@ function wingStation(s) {
   // Dogtooth: a small forward notch where sweep increases.
   const d = Math.abs(s - kink);
   if (d < 0.035) zLe -= (1 - d / 0.035) * 0.28;
-  const y = lerp(0.02, -0.72, s);
-  const thick = lerp(0.20, 0.045, s);
+  const y = lerp(0.06, -0.24, s);
+  const thick = lerp(0.26, 0.05, s);
   return { x, y, zLe, zTe, thick };
 }
 
@@ -384,7 +384,6 @@ function addNozzle(side, paint, inner, glow) {
     circleRing(6.85, cx, cy, 0.46, 0.44, n),
     circleRing(7.35, cx, cy, 0.40, 0.38, n),
   ];
-  paint.indices.push(0); // keep lints quiet if empty — removed below if I don't do this
   const shell = addLoftRings(outer, ATLAS.nozzle, (_i, j) => j / n, (i) => i / 2);
   appendInto(paint, shell);
 
@@ -421,8 +420,9 @@ function addDisc(geo, c, r, segs, normalPlusZ) {
 }
 
 function appendInto(dst, src) {
+  if (!src || src.indices.length === 0) return;
   const base = dst.verts.length;
-  for (const v of src.verts) dst.verts.push({ p: v.p.slice(), uv: v.uv.slice(), n: [0, 1, 0] });
+  for (const v of src.verts) dst.verts.push({ p: v.p.slice(), uv: v.uv.slice(), n: v.n.slice() });
   for (const i of src.indices) dst.indices.push(i + base);
 }
 
@@ -496,31 +496,35 @@ function addBox(geo, c, sx, sy, sz) {
 }
 
 function addSphere(geo, c, r, seg, rings) {
+  const top = geo.v([c[0], c[1] + r, c[2]], [0.5, 1]);
+  const bot = geo.v([c[0], c[1] - r, c[2]], [0.5, 0]);
   const ids = [];
-  for (let i = 0; i <= rings; i++) {
-    const v = i / rings;
-    const phi = v * Math.PI;
+  for (let i = 1; i < rings; i++) {
+    const phi = (i / rings) * Math.PI;
     ids[i] = [];
     for (let j = 0; j <= seg; j++) {
-      const u = j / seg;
-      const theta = u * Math.PI * 2;
-      const x = c[0] + Math.sin(phi) * Math.cos(theta) * r;
-      const y = c[1] + Math.cos(phi) * r;
-      const z = c[2] + Math.sin(phi) * Math.sin(theta) * r;
-      ids[i][j] = geo.v([x, y, z], [u, 1 - v]);
+      const theta = (j / seg) * Math.PI * 2;
+      ids[i][j] = geo.v([
+        c[0] + Math.sin(phi) * Math.cos(theta) * r,
+        c[1] + Math.cos(phi) * r,
+        c[2] + Math.sin(phi) * Math.sin(theta) * r,
+      ], [j / seg, 1 - i / rings]);
     }
   }
-  for (let i = 0; i < rings; i++) {
+  for (let j = 0; j < seg; j++) geo.tri(top, ids[1][j + 1], ids[1][j]);
+  for (let i = 1; i < rings - 1; i++) {
     for (let j = 0; j < seg; j++) {
-      geo.quad(ids[i][j], ids[i + 1][j], ids[i + 1][j + 1], ids[i][j + 1]);
+      geo.quad(ids[i][j], ids[i][j + 1], ids[i + 1][j + 1], ids[i + 1][j]);
     }
   }
+  const last = rings - 1;
+  for (let j = 0; j < seg; j++) geo.tri(bot, ids[last][j], ids[last][j + 1]);
 }
 
 function addIntake(side, shellParts, cavityParts) {
   const n = 12;
-  const cx = 1.05 * side;
-  const cy = -0.08;
+  const cx = 0.82 * side;
+  const cy = -0.02;
   // Rounded-rect via superellipse, lofted along Z. Opening faces -Z.
   const mk = (z, rx, ry) => {
     const pts = [];
@@ -536,7 +540,7 @@ function addIntake(side, shellParts, cavityParts) {
     return pts;
   };
   const shell = addLoftRings(
-    [mk(-2.15, 0.42, 0.32), mk(-1.7, 0.34, 0.26), mk(-0.4, 0.30, 0.22), mk(0.8, 0.22, 0.16)],
+    [mk(-1.85, 0.34, 0.26), mk(-1.45, 0.28, 0.22), mk(-0.55, 0.24, 0.18), mk(0.15, 0.16, 0.12)],
     ATLAS.metal,
     (_i, j) => j / n,
     (i) => i / 3,
@@ -544,7 +548,7 @@ function addIntake(side, shellParts, cavityParts) {
   appendInto(shellParts, shell);
 
   const hole = addLoftRings(
-    [mk(-1.85, 0.26, 0.18), mk(-0.9, 0.22, 0.15)],
+    [mk(-1.55, 0.18, 0.13), mk(-0.7, 0.14, 0.10)],
     ATLAS.metal,
     (_i, j) => j / n,
     () => 0.05,
@@ -555,12 +559,9 @@ function addIntake(side, shellParts, cavityParts) {
 
   const seal = new Geo();
   // Dark seal facing forward (-Z) so the duct doesn't see through the airframe.
-  const c = P(cx, cy, -0.85);
-  addDisc(seal, c, 0.20 * S, n, false);
+  const c = P(cx, cy, -0.65);
+  addDisc(seal, c, 0.15 * S, n, false);
   appendInto(cavityParts, seal);
-
-  // Splitter plate above the lip.
-  addBox(shellParts, [cx, cy + 0.30, -1.95], 0.62, 0.035, 0.55);
 }
 
 function addLerx(side) {
@@ -568,10 +569,10 @@ function addLerx(side) {
   const g = new Geo();
   const n = 1;
   const specs = [
-    { z: -4.6, x0: 0.35, x1: 0.55, y: 0.18, t: 0.04 },
-    { z: -3.4, x0: 0.40, x1: 1.15, y: 0.12, t: 0.06 },
-    { z: -2.2, x0: 0.48, x1: 1.85, y: 0.06, t: 0.07 },
-    { z: -1.15, x0: 0.55, x1: 2.35, y: 0.02, t: 0.06 },
+    { z: -4.2, x0: 0.42, x1: 0.62, y: 0.10, t: 0.035 },
+    { z: -3.1, x0: 0.46, x1: 1.05, y: 0.08, t: 0.04 },
+    { z: -2.0, x0: 0.50, x1: 1.45, y: 0.06, t: 0.045 },
+    { z: -1.15, x0: 0.55, x1: 1.85, y: 0.05, t: 0.04 },
   ];
   const rings = specs.map((s) => {
     const x0 = s.x0 * side;
@@ -645,7 +646,7 @@ function addFin(side) {
       const c = j / chordN;
       const z = lerp(zLe, zTe, c);
       const th = airfoil(c) * thick;
-      const uv = uvIn(ATLAS.tail, s, c);
+      const uv = uvIn(ATLAS.tail, c, s);
       if (j === 0 || j === chordN) mid[i][j] = g.v(map(0, y, z), uv);
       else {
         up[i][j] = g.v(map(th, y, z), uv);
@@ -690,19 +691,28 @@ function addMissile(geo, cx, cy, zCenter) {
     (i) => 0.75 + i * 0.25,
   );
   appendInto(geo, cone);
-  // Four fins at the tail
-  const finR = 0.34;
+  // Four fins at the tail, thin so they don't z-fight.
+  const finR = 0.38;
   for (let k = 0; k < 4; k++) {
     const a = (k / 4) * Math.PI * 2 + Math.PI / 4;
     const nx = Math.cos(a), ny = Math.sin(a);
+    const tx = -ny * 0.012, ty = nx * 0.012;
     const f = new Geo();
-    const p = (z, rad) => P(cx + nx * rad, cy + ny * rad, z);
-    const A = f.v(p(z0 - 0.15, r * 0.5), uvIn(ATLAS.missile, 0.1, 0.1));
-    const B = f.v(p(z0 + 0.05, r * 0.5), uvIn(ATLAS.missile, 0.1, 0.4));
-    const C = f.v(p(z0 + 0.05, finR), uvIn(ATLAS.missile, 0.9, 0.4));
-    const D = f.v(p(z0 - 0.55, finR * 0.85), uvIn(ATLAS.missile, 0.9, 0.1));
-    f.quad(A, B, C, D);
-    f.quad(A, D, C, B);
+    const p = (z, rad, s) => P(cx + nx * rad + tx * s, cy + ny * rad + ty * s, z);
+    const corners = (s) => [
+      p(z0 - 0.15, r * 0.45, s),
+      p(z0 + 0.08, r * 0.45, s),
+      p(z0 + 0.08, finR, s),
+      p(z0 - 0.62, finR * 0.9, s),
+    ];
+    const A = corners(1).map((pt) => f.v(pt, uvIn(ATLAS.missile, 0.2, 0.2)));
+    const B = corners(-1).map((pt) => f.v(pt, uvIn(ATLAS.missile, 0.8, 0.2)));
+    f.quad(A[0], A[1], A[2], A[3]);
+    f.quad(B[0], B[3], B[2], B[1]);
+    for (let i = 0; i < 4; i++) {
+      const j = (i + 1) % 4;
+      f.quad(A[i], A[j], B[j], B[i]);
+    }
     appendInto(geo, f);
   }
 }
@@ -754,9 +764,9 @@ function rgb(r, g, b) { return [r, g, b]; }
 function mixc(a, b, t) { return [mix(a[0], b[0], t), mix(a[1], b[1], t), mix(a[2], b[2], t)]; }
 
 const COL = {
-  top: rgb(78, 86, 96),
-  side: rgb(118, 128, 138),
-  belly: rgb(176, 186, 194),
+  top: rgb(132, 142, 152),
+  side: rgb(176, 184, 192),
+  belly: rgb(214, 220, 224),
   line: rgb(36, 42, 48),
   dirt: rgb(62, 56, 50),
   glass: rgb(14, 28, 36),
@@ -821,7 +831,7 @@ function paintPixel(u, v) {
     let c = mixc(COL.top, rgb(96, 104, 112), 0.35);
     if (su < 0.16) c = mixc(c, rgb(58, 64, 70), (0.16 - su) / 0.16 * 0.55); // walkway
     if (sv < 0.06) c = mixc(c, rgb(150, 158, 166), (0.06 - sv) / 0.06 * 0.7); // LE metal
-    if (sv > 0.74) c = mixc(c, rgb(64, 70, 78), 0.28); // aileron / flap
+    if (sv > 0.74) c = mixc(c, rgb(108, 116, 124), 0.22); // aileron / flap
     const pxU = (ATLAS.wingT.u1 - ATLAS.wingT.u0) * 1024;
     const pxV = (ATLAS.wingT.v1 - ATLAS.wingT.v0) * 1024;
     const sh = panelShade(su, sv, 8, 10, pxU / 8, pxV / 10);
@@ -835,12 +845,12 @@ function paintPixel(u, v) {
     const cy = (0.46 * (ATLAS.wingT.v1 - ATLAS.wingT.v0) + ATLAS.wingT.v0) * 1024;
     const px = u * 1024, py = v * 1024;
     const d = Math.hypot(px - cx, py - cy);
-    if (d < 46) {
-      const ring = d > 30 && d < 44;
-      const core = d < 16;
-      if (ring) c = mixc(c, rgb(232, 236, 238), smooth(d, 44, 40) * smooth(d, 30, 34));
-      else if (core) c = mixc(c, rgb(70, 86, 104), smooth(d, 16, 12));
-      else if (d < 30) c = mixc(c, rgb(90, 98, 106), 0.35);
+    if (d < 58) {
+      const ring = d > 38 && d < 56;
+      const core = d < 20;
+      if (ring) c = mixc(c, rgb(236, 240, 242), smooth(d, 56, 50) * smooth(d, 38, 44));
+      else if (core) c = mixc(c, rgb(52, 72, 96), smooth(d, 20, 14));
+      else if (d < 38) c = mixc(c, rgb(96, 108, 120), 0.45);
     }
     if (su > 0.92) c = mixc(c, rgb(70, 74, 78), (su - 0.92) / 0.08);
     return c;
@@ -1082,8 +1092,8 @@ function writeGlb(primitives, jpeg) {
         name: 'paint',
         pbrMetallicRoughness: {
           baseColorTexture: { index: 0 },
-          metallicFactor: 0.18,
-          roughnessFactor: 0.62,
+          metallicFactor: 0.1,
+          roughnessFactor: 0.68,
         },
       },
       {
@@ -1205,7 +1215,7 @@ function build() {
     uvTop: ATLAS.wingT,
     uvBot: ATLAS.wingB,
     side: 1,
-    deflect: -0.08,
+    deflect: -0.035,
     hingeC: 0.7,
   }), 'wingR');
   const wingL = finalize(addAirfoil({
@@ -1215,7 +1225,7 @@ function build() {
     uvTop: ATLAS.wingT,
     uvBot: ATLAS.wingB,
     side: -1,
-    deflect: -0.08,
+    deflect: -0.035,
     hingeC: 0.7,
   }), 'wingL');
   appendInto(paint, wingR);
@@ -1249,47 +1259,42 @@ function build() {
   const nozzleInner = new Geo();
   addNozzle(1, nozzlePaint, nozzleInner, glow);
   addNozzle(-1, nozzlePaint, nozzleInner, glow);
-  // addNozzle pushed a dummy index; strip empties
-  nozzlePaint.indices = nozzlePaint.indices.filter((v, i, arr) => {
-    // remove the sentinel 0 I pushed once per call if it created a degenerate — 
-    // actually I did `paint.indices.push(0)` on the passed-in geo which is nozzlePaint.
-    return true;
-  });
-  // The sentinel push adds a single 0 which is NOT a full triangle. Remove stray if length % 3 !== 0.
-  if (nozzlePaint.indices.length % 3 !== 0) {
-    nozzlePaint.indices = nozzlePaint.indices.slice(0, nozzlePaint.indices.length - (nozzlePaint.indices.length % 3));
-  }
   appendInto(nozzle, finalize(nozzlePaint, 'nozzle'));
-  appendInto(interior, finalize(nozzleInner, 'duct'));
+  // Ducts were flipped inward in addNozzle / addIntake. Don't orient them again.
+  nozzleInner.computeNormals(48);
+  console.log(`  ${'duct'.padEnd(10)} ${String(nozzleInner.indices.length / 3).padStart(5)} tris`);
 
   appendInto(glass, finalize(addCanopy(), 'canopy'));
   addCockpit(interior, helmet);
-  finalize(interior, 'interior');
-  finalize(helmet, 'helmet');
+  interior.orientOutward();
+  helmet.orientOutward();
 
   const intakeShell = new Geo();
   const intakeHole = new Geo();
   addIntake(1, intakeShell, intakeHole);
   addIntake(-1, intakeShell, intakeHole);
   appendInto(nozzle, finalize(intakeShell, 'intake'));
-  appendInto(interior, finalize(intakeHole, 'intakeIn'));
+  intakeHole.computeNormals(48);
+  console.log(`  ${'intakeIn'.padEnd(10)} ${String(intakeHole.indices.length / 3).padStart(5)} tris`);
+  appendInto(interior, nozzleInner);
+  appendInto(interior, intakeHole);
 
   const missiles = new Geo();
   // Wingtip rails — sit just outboard and slightly below the tip.
   const tip = wingStation(1);
-  addMissile(missiles, tip.x + 0.15, tip.y - 0.05, (tip.zLe + tip.zTe) / 2 - 0.2);
-  addMissile(missiles, -tip.x - 0.15, tip.y - 0.05, (tip.zLe + tip.zTe) / 2 - 0.2);
-  const mid = wingStation(0.48);
-  addMissile(missiles, mid.x, mid.y - 0.55, (mid.zLe + mid.zTe) / 2);
-  addMissile(missiles, -mid.x, mid.y - 0.55, (mid.zLe + mid.zTe) / 2);
-  addPylon(missiles, mid.x, mid.y - 0.12, mid.y - 0.42, (mid.zLe + mid.zTe) / 2 + 0.3);
-  addPylon(missiles, -mid.x, mid.y - 0.12, mid.y - 0.42, (mid.zLe + mid.zTe) / 2 + 0.3);
+  const tipZ = (tip.zLe + tip.zTe) / 2 - 0.15;
+  addMissile(missiles, tip.x - 0.05, tip.y - 0.08, tipZ);
+  addMissile(missiles, -tip.x + 0.05, tip.y - 0.08, tipZ);
+  const mid = wingStation(0.46);
+  const midZ = (mid.zLe + mid.zTe) / 2 + 0.15;
+  addMissile(missiles, mid.x, mid.y - 0.38, midZ);
+  addMissile(missiles, -mid.x, mid.y - 0.38, midZ);
+  addPylon(missiles, mid.x, mid.y - 0.08, mid.y - 0.28, midZ + 0.25);
+  addPylon(missiles, -mid.x, mid.y - 0.08, mid.y - 0.28, midZ + 0.25);
   appendInto(paint, finalize(missiles, 'missiles'));
 
-  // Antennas, pitot, nav lights
-  addBlade(paint, [0, 0.95, -1.6], 0.025, 0.28, 0.22);
-  addBlade(paint, [0, 0.55, 2.4], 0.02, 0.22, 0.16);
-  addBlade(paint, [0, 0.08, -8.45], 0.025, 0.025, 0.55); // pitot
+  // Pitot only — spine antennas read as boxes at this camera distance.
+  addBlade(paint, [0, 0.08, -8.55], 0.02, 0.02, 0.42);
   finalize(paint, 'paintAll');
 
   // Lights are tiny boxes; give them outward normals via finalize.
@@ -1300,7 +1305,16 @@ function build() {
   finalize(red, 'red');
   finalize(green, 'green');
   finalize(white, 'white');
-  // Glow discs already have explicit normals; don't orientOutward (flat disc score ~0).
+  // Parts were oriented before append; recompute normals on the merged buckets.
+  // Interior stays mixed (cockpit outward, ducts inward) so it is not re-oriented.
+  paint.computeNormals(40);
+  nozzle.orientOutward();
+  nozzle.computeNormals(40);
+  glass.orientOutward();
+  glass.computeNormals(58);
+  interior.computeNormals(48);
+  helmet.orientOutward();
+  helmet.computeNormals(50);
   glow.computeNormals(80);
 
   const groups = [paint, nozzle, glass, interior, helmet, glow, red, green, white];
