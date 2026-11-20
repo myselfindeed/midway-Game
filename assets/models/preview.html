@@ -5,14 +5,14 @@
   <title>MF-24 preview</title>
   <style>html,body,canvas{margin:0;height:100%;background:#6eb7ff;overflow:hidden}</style>
   <script type="importmap">
-  { "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js" } }
+  { "imports": { "three": "../../vendor/three/build/three.module.js" } }
   </script>
 </head>
 <body>
 <canvas id="c"></canvas>
 <script type="module">
 import * as THREE from 'three';
-import { GLTFLoader } from 'https://unpkg.com/three@0.160.0/examples/jsm/loaders/GLTFLoader.js';
+import { GLTFLoader } from '../../vendor/three/examples/jsm/loaders/GLTFLoader.js';
 
 const canvas = document.getElementById('c');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });

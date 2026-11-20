@@ -35,32 +35,11 @@ html, body, #app {
 
 .hidden { display: none !important; }
 
-.rotate-gate {
-  position: absolute;
-  inset: 0;
-  z-index: 50;
-  display: none;
-  align-items: center;
-  justify-content: center;
-  background: radial-gradient(circle at 50% 30%, #132338, #050a12 70%);
+/* 游戏容器：让绝对定位的 canvas / HUD / overlay 都相对它定位，
+   竖屏时再整体旋转 90°（见末尾的 orientation 媒体查询） */
+#app {
+  position: relative;
 }
-.rotate-gate.show { display: flex; }
-.rotate-card {
-  text-align: center;
-  padding: 28px 32px;
-  border: 1px solid var(--line);
-  background: var(--panel);
-  border-radius: 16px;
-}
-.rotate-icon {
-  font-size: 42px;
-  color: var(--cyan);
-  margin-bottom: 12px;
-  animation: spin 2.4s linear infinite;
-}
-@keyframes spin { to { transform: rotate(360deg); } }
-.rotate-card p { font-size: 20px; margin-bottom: 8px; }
-.rotate-card span { color: var(--muted); font-size: 13px; }
 
 .hud {
   position: absolute;
@@ -411,11 +390,62 @@ html, body, #app {
   margin-bottom: 8px;
 }
 
-@media (orientation: portrait) {
-  .rotate-gate { display: flex; }
-  .hud, .overlay { visibility: hidden; }
+/* 关卡选择：沿用面板既有的线框与青色强调，不引入新的颜色 */
+.level-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 6px 0 2px;
+  text-align: left;
 }
-@media (orientation: landscape) {
-  .rotate-gate { display: none !important; }
-  .hud, .overlay { visibility: visible; }
+.level-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: rgba(12, 28, 44, 0.55);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+  transition: border-color 0.18s ease, background 0.18s ease;
+}
+.level-item:not(.locked):hover,
+.level-item:not(.locked):focus-visible {
+  border-color: var(--cyan);
+  background: rgba(20, 52, 78, 0.72);
+}
+.level-item.locked { opacity: 0.42; cursor: default; }
+.level-no {
+  min-width: 24px;
+  font-size: 13px;
+  letter-spacing: 0.1em;
+  color: var(--cyan);
+}
+.level-text { display: flex; flex-direction: column; gap: 2px; flex: 1; }
+.level-text b { font-size: 15px; font-weight: 600; }
+.level-text em { font-style: normal; font-size: 12px; color: var(--muted); }
+.level-tag { font-size: 11px; color: var(--muted); white-space: nowrap; }
+.level-item:not(.locked) .level-tag { color: var(--ok); }
+
+/* 竖屏时把整个游戏画面（含 canvas + HUD + 弹层）旋转 90°：
+   游戏本身按横屏渲染，手机竖着拿时画面横着显示，用户横放手机即见正。 */
+@media (orientation: portrait) {
+  #app {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    /* 100vh 兜底，100dvh 动态视口：竖屏锁定横放时地址栏/工具栏会占掉一块高度，
+       100vh 算的是"大视口"（比实际可视区高），旋转后按钮会被浏览器 chrome 顶出去；
+       dvh 跟随地址栏收起/展开，容器尺寸始终等于实际可视区，按钮不再被遮挡。 */
+    width: 100vh;
+    width: 100dvh;
+    height: 100vw;
+    transform: translate(-50%, -50%) rotate(90deg);
+    /* 画面旋转 90° 后，物理"顶部(刘海)"落到布局底部、物理"底部(Home条)"落到布局顶部，
+       安全边距对调，HUD 才会贴到正确的一侧（顶部朝左横放时）。 */
+    --safe-t: env(safe-area-inset-bottom, 0px);
+    --safe-b: env(safe-area-inset-top, 0px);
+  }
 }

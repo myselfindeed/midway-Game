@@ -1,0 +1,16 @@
+{
+  "size": 1024,
+  "minHeight": -40,
+  "maxHeight": 130,
+  "seaLevel": -18,
+  "extent": 2560,
+  "center": [
+    0,
+    -560
+  ],
+  "actualRange": [
+    -78.5,
+    89.5
+  ],
+  "coastlineZ": -380
+}

@@ -1,12 +1,6 @@
-const BRIEFING = [
-  '1942 年 6 月，太平洋上的中途岛将成为战局转折点。',
-  '本作以现代空战形式进行作战推演——先发现敌人，才能赢得先机。',
-  '特工学员，驾驶战机护航侦察：击落来袭敌机，守住「云上的眼睛」。',
-];
+import { LEVELS, nextPlayable } from './levels.js';
 
-const VICTORY_LINE = '历史收束：侦察与预警，让中途岛在暴风雨来临前看见了敌人。';
-const DEFEAT_LINE = '任务中断。从检查点重试，继续护航侦察。';
-const CP_LINE = '检查点达成：第一波敌机清除。编队状态已保存（登录后可持久化）。';
+const PROGRESS_KEY = 'midway-progress';
 
 export class UI {
   constructor() {
@@ -26,11 +20,15 @@ export class UI {
     this.btnShield = document.getElementById('btnShield');
     this.btnPause = document.getElementById('btnPause');
     this.btnMute = document.getElementById('btnMute');
-    this.rotateGate = document.getElementById('rotateGate');
+    this.canvas = document.getElementById('game');
 
     this.onStart = null;
     this.onRetry = null;
     this.onPauseToggle = null;
+    this.onSelectLevel = null;
+    this.currentLevel = LEVELS[0];
+    this._missionMain = null;
+    this._missionSub = null;
 
     this._audioCtx = null;
     this._master = null;
@@ -40,7 +38,6 @@ export class UI {
     this._bindHome();
     this._bindPause();
     this._bindMute();
-    this._watchOrientation();
   }
 
   _bindMute() {
@@ -66,20 +63,142 @@ export class UI {
       this._audioCtx = new (window.AudioContext || window.webkitAudioContext)();
       this._master = this._audioCtx.createGain();
       this._master.gain.value = this.muted ? 0 : 1;
-      this._master.connect(this._audioCtx.destination);
+      // 总线限幅：同屏可能有三四发爆炸重叠，不压一下会直接爆音（数字削波会很刺）
+      const limiter = this._audioCtx.createDynamicsCompressor();
+      limiter.threshold.value = -9;
+      limiter.knee.value = 6;
+      limiter.ratio.value = 8;
+      limiter.attack.value = 0.002;
+      limiter.release.value = 0.18;
+      this._master.connect(limiter);
+      limiter.connect(this._audioCtx.destination);
+      this._loadSfx();
     }
     if (this._audioCtx.state === 'suspended') this._audioCtx.resume();
     return this._audioCtx;
   }
 
+  /**
+   * 载入离线烘焙的音效。合成器做不出"真实"，只能靠录音级的采样；
+   * 但没有可商用授权的录音，所以这些 WAV 是自己逐采样合成的
+   * （见 tools/bake-sfx.mjs）。载入失败时 playSfx 会退回旧的实时合成。
+   */
+  _loadSfx() {
+    if (this._sfxLoading) return;
+    this._sfxLoading = true;
+    const files = {
+      missile: 'assets/audio/missile-launch.wav',
+      explode: 'assets/audio/explosion-air.wav',
+    };
+    for (const [key, url] of Object.entries(files)) {
+      fetch(url)
+        .then((r) => {
+          if (!r.ok) throw new Error(`HTTP ${r.status}`);
+          return r.arrayBuffer();
+        })
+        .then((buf) => this._audioCtx.decodeAudioData(buf))
+        .then((decoded) => {
+          this._sfx = this._sfx || {};
+          this._sfx[key] = decoded;
+        })
+        .catch(() => {
+          /* 静默降级到合成音 */
+        });
+    }
+  }
+
+  /**
+   * 播放一段烘焙好的采样。
+   * pan 由 Game 按目标相对相机的左右位置算出来（-1 左 / 1 右），
+   * gain 按距离衰减；rate 略随机化，避免连续两次发射听起来是同一段录音。
+   */
+  _playSample(buffer, { gain = 1, pan = 0, rate = 1 } = {}) {
+    const ctx = this._audioCtx;
+    const now = ctx.currentTime;
+    const src = ctx.createBufferSource();
+    src.buffer = buffer;
+    src.playbackRate.value = rate;
+    const g = ctx.createGain();
+    g.gain.value = gain;
+    const p = ctx.createStereoPanner ? ctx.createStereoPanner() : null;
+    if (p) p.pan.value = Math.max(-1, Math.min(1, pan));
+    src.connect(g);
+    if (p) {
+      g.connect(p);
+      p.connect(this._master);
+    } else {
+      g.connect(this._master);
+    }
+    src.start(now);
+    if (!this._voices) this._voices = new Set();
+    this._voices.add(src);
+    src.onended = () => this._voices.delete(src);
+    return src;
+  }
+
   _bindHome() {
-    document.getElementById('btnStart').addEventListener('click', () => {
-      this.showBriefing(BRIEFING, () => {
-        this.hideOverlay();
-        this.hud.classList.remove('hidden');
-        this.onStart?.();
+    const btn = document.getElementById('btnStart');
+    if (!btn) return;
+    btn.addEventListener('click', () => this.showLevelSelect());
+  }
+
+  /** 已解锁到第几关：本地存档 + ?debug 全开（方便调试/截图） */
+  _unlockedMax() {
+    if (new URLSearchParams(location.search).has('debug')) return LEVELS.length;
+    let saved = 1;
+    try {
+      saved = Number(localStorage.getItem(PROGRESS_KEY)) || 1;
+    } catch {
+      saved = 1;
+    }
+    return Math.min(LEVELS.length, Math.max(1, saved));
+  }
+
+  _saveProgress(clearedId) {
+    try {
+      const next = Math.min(LEVELS.length, Math.max(this._unlockedMax(), clearedId + 1));
+      localStorage.setItem(PROGRESS_KEY, String(next));
+    } catch {
+      /* 本地存档不可用时只影响解锁提示，不影响当前这局 */
+    }
+  }
+
+  showLevelSelect() {
+    const unlocked = this._unlockedMax();
+    const items = LEVELS.map((l) => {
+      const locked = !l.playable || l.id > unlocked;
+      const tag = !l.playable ? l.note || '即将开放' : l.id > unlocked ? '未解锁' : '可进入';
+      return `
+        <button class="level-item${locked ? ' locked' : ''}" data-level="${l.id}" type="button"${locked ? ' disabled' : ''}>
+          <span class="level-no">${String(l.id).padStart(2, '0')}</span>
+          <span class="level-text"><b>${l.title}</b><em>${l.subtitle}</em></span>
+          <span class="level-tag">${tag}</span>
+        </button>`;
+    }).join('');
+    this.overlay.classList.remove('hidden');
+    this.overlay.innerHTML = `
+      <div class="panel">
+        <p class="eyebrow">作战推演 · DEMO</p>
+        <h1>选择关卡</h1>
+        <div class="level-list">${items}</div>
+        <p class="hint">通关后解锁下一关 · 进度仅保存在本机浏览器<br>左手摇杆转向 · 右手按住射击 / 加速 · E 导弹 · Q 护盾</p>
+      </div>`;
+    this.overlay.querySelectorAll('.level-item:not(.locked)').forEach((el) => {
+      el.addEventListener('click', () => {
+        const level = LEVELS.find((l) => l.id === Number(el.dataset.level));
+        if (!level) return;
+        this.showBriefing(level, () => this.beginLevel(level.id));
       });
     });
+  }
+
+  beginLevel(id) {
+    const level = LEVELS.find((l) => l.id === id) || LEVELS[0];
+    this.currentLevel = level;
+    this.hideOverlay();
+    this.hud.classList.remove('hidden');
+    this.setMission('', '', true);
+    this.onSelectLevel?.(id);
   }
 
   _bindPause() {
@@ -88,24 +207,14 @@ export class UI {
     });
   }
 
-  _watchOrientation() {
-    const sync = () => {
-      const portrait = window.matchMedia('(orientation: portrait)').matches;
-      this.rotateGate.classList.toggle('show', portrait);
-    };
-    sync();
-    window.addEventListener('resize', sync);
-    window.addEventListener('orientationchange', sync);
-  }
-
-  showBriefing(lines, done) {
+  showBriefing(level, done) {
+    const lines = level.briefing;
     let i = 0;
     const render = () => {
       this.overlay.classList.remove('hidden');
       this.overlay.innerHTML = `
         <div class="panel">
-          <p class="eyebrow">任务简报 · 不可跳过</p>
-          <p class="meta">旁白 ${i + 1}/${lines.length}</p>
+          <p class="eyebrow">第 ${level.id} 关 · ${level.title} · 简报 ${i + 1}/${lines.length}</p>
           <div class="narration-line">${lines[i]}</div>
           <button id="btnNext" class="btn-primary" type="button">${i < lines.length - 1 ? '继续' : '进入战斗'}</button>
         </div>`;
@@ -146,10 +255,16 @@ export class UI {
     this.hpFill.style.transform = `scaleX(${r})`;
   }
 
-  updateMission(kills, target, phase) {
-    this.missionText.textContent = `击落敌机 ${kills}/${target}`;
-    this.phaseText.textContent =
-      phase === 'A' ? '阶段 A · 侦察护航（海面有航母编队）' : '阶段 B · 扩大战果（可锁定舰船）';
+  /**
+   * 任务栏两行文案由 Game 决定（每关目标不同），这里只做去重写入：
+   * 编队装甲每次挨弹都会变，但每秒几十次 textContent 赋值会一直触发重排。
+   */
+  setMission(main, sub, force = false) {
+    if (!force && main === this._missionMain && sub === this._missionSub) return;
+    this._missionMain = main;
+    this._missionSub = sub;
+    this.missionText.textContent = main;
+    this.phaseText.textContent = sub;
   }
 
   updateFlight(speed, altitude, elapsed) {
@@ -185,9 +300,13 @@ export class UI {
       return;
     }
     frame.classList.add('tracking');
-    const box = frame.getBoundingClientRect();
-    const cx = box.left + box.width / 2;
-    const cy = box.top + box.height / 2;
+    // 用游戏画面坐标系（canvas 布局尺寸），竖屏锁定横放时不能再依赖
+    // getBoundingClientRect / innerWidth（那是旋转后的视口坐标，会错位）。
+    const cw = this.canvas.clientWidth || window.innerWidth;
+    const ch = this.canvas.clientHeight || window.innerHeight;
+    // frame 以 (frameX, frameY) 为中心（CSS translate(-50%,-50%)），即画面里的准星点
+    const cx = info.frameX;
+    const cy = info.frameY;
     let dx = info.x - cx;
     let dy = info.y - cy;
     if (info.behind) {
@@ -195,9 +314,10 @@ export class UI {
       dy = -dy;
     }
     const ang = Math.atan2(dy, dx);
-    const reach = Math.max(box.width * 0.72, Math.min(Math.hypot(dx, dy) || 1, Math.min(window.innerWidth, window.innerHeight) * 0.42));
-    const ax = Math.min(window.innerWidth - 28, Math.max(28, cx + Math.cos(ang) * reach));
-    const ay = Math.min(window.innerHeight - 28, Math.max(28, cy + Math.sin(ang) * reach));
+    const fw = frame.offsetWidth || 96;
+    const reach = Math.max(fw * 0.72, Math.min(Math.hypot(dx, dy) || 1, Math.min(cw, ch) * 0.42));
+    const ax = Math.min(cw - 28, Math.max(28, cx + Math.cos(ang) * reach));
+    const ay = Math.min(ch - 28, Math.max(28, cy + Math.sin(ang) * reach));
     dir.classList.remove('hidden');
     dir.style.left = `${ax}px`;
     dir.style.top = `${ay}px`;
@@ -224,33 +344,37 @@ export class UI {
     this._subTimer = setTimeout(() => this.subtitle.classList.add('hidden'), ms);
   }
 
-  onCheckpoint() {
-    this.flashSubtitle(CP_LINE, 3200);
+  onCheckpoint(line) {
+    this.flashSubtitle(line || '检查点达成：编队状态已保存。', 3200);
   }
 
-  onVictory() {
+  onVictory(level) {
+    this.currentLevel = level;
     this.hud.classList.add('hidden');
+    this._saveProgress(level.id);
+    const next = nextPlayable(level);
+    const demoEnd = next ? '' : '<br><br>全部关卡已通关，可返回选关重玩任意一关。';
     this.showPanel({
       eyebrow: '任务完成',
-      title: '云上的眼睛',
-      body: VICTORY_LINE,
-      primary: {
-        label: '再玩一次',
-        onClick: () => {
-          this.hideOverlay();
-          this.hud.classList.remove('hidden');
-          this.onRetry?.('start');
-        },
-      },
+      title: level.victory.title,
+      body: `${level.victory.body}${demoEnd}`,
+      primary: next
+        ? {
+            label: `进入第 ${next.id} 关 · ${next.title}`,
+            onClick: () => this.showBriefing(next, () => this.beginLevel(next.id)),
+          }
+        : { label: '返回关卡选择', onClick: () => this.showLevelSelect() },
+      secondary: next ? { label: '返回关卡选择', onClick: () => this.showLevelSelect() } : null,
     });
   }
 
-  onDefeat(checkpoint) {
+  onDefeat(checkpoint, reason = 'player', level = this.currentLevel) {
     this.hud.classList.add('hidden');
+    const body = level?.defeat?.[reason] || level?.defeat?.player || '任务中断，从检查点重试。';
     this.showPanel({
-      eyebrow: '任务失败',
+      eyebrow: reason === 'base' ? '编队覆没' : '任务失败',
       title: '从检查点重试',
-      body: DEFEAT_LINE,
+      body,
       primary: {
         label: checkpoint === 'cp1' ? '从检查点重试' : '整关重来',
         onClick: () => {
@@ -368,10 +492,39 @@ export class UI {
     }
   }
 
-  playSfx(type) {
+  playSfx(type, opts = {}) {
     try {
       const ctx = this._ensureAudio();
       const now = ctx.currentTime;
+
+      // 优先用烘焙采样；没加载完或加载失败就退回下面的实时合成
+      if (type === 'missile' && this._sfx?.missile) {
+        this._playSample(this._sfx.missile, {
+          gain: 1.0 * (opts.gain ?? 1),
+          pan: opts.pan ?? 0,
+          // 变调范围收窄到 ±2%：再大就会和试听时选定的那版听起来不是同一个声音。
+          // 留一点点随机只是为了连续发射时不至于完全复读。
+          rate: (opts.rate ?? 1) * (0.98 + Math.random() * 0.04),
+        });
+        return;
+      }
+      if (type === 'explode' && this._sfx?.explode) {
+        // 同屏多架同时被击落时叠起来会变成噪音墙，按 0.35 s 内的重叠数压低
+        if (!this._explodeLog) this._explodeLog = [];
+        this._explodeLog = this._explodeLog.filter((t) => now - t < 0.35);
+        const overlap = this._explodeLog.length;
+        this._explodeLog.push(now);
+        const duck = 1 / (1 + overlap * 0.5);
+        this._playSample(this._sfx.explode, {
+          gain: 0.60 * (opts.gain ?? 1) * duck,
+          pan: opts.pan ?? 0,
+          // 和导弹一样收窄到 ±2.5%：这一段是选定的版本，变调太多就不是同一个声音了。
+          // 舰船那条路径显式传 rate 0.78，仍然在这个基础上继续下压
+          rate: (opts.rate ?? 1) * (0.975 + Math.random() * 0.05),
+        });
+        return;
+      }
+
       if (type === 'shoot') {
         this._burst(now, { duration: 0.07, gain: 0.42, filter: 'bandpass', freq: 1800, endFreq: 700, q: 0.6 });
         this._burst(now, { duration: 0.045, gain: 0.22, filter: 'highpass', freq: 3200, q: 0.4 });
